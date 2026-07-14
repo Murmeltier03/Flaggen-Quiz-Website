@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { ArrowRight, Check, Copy, Crown, Globe2, LogIn, Play, Trophy, Users, Zap } from "lucide-react";
+import { ArrowRight, Copy, Crown, Globe2, LogIn, Play, Sparkles, Trophy, Users } from "lucide-react";
+import { PlayerAvatar } from "@/components/player-avatar";
 import type { Profile } from "@/lib/types";
 
 async function jsonRequest<T>(url: string, options?: RequestInit): Promise<T> {
@@ -89,34 +90,39 @@ export default function HomePage() {
           <span>Flaggenfieber</span>
         </a>
         <div className="nav-status">
-          {profile ? <><span className="status-dot" /> {profile.displayName}</> : "193 Länder. Eine Mission."}
+          {profile ? <><PlayerAvatar avatarId={profile.avatarId} size={30} /> <span>{profile.displayName}</span></> : <><span className="status-dot" /> Bereit für die nächste Runde</>}
         </div>
       </nav>
 
       <section className="hero wrap" id="top">
         <div className="hero-copy">
-          <div className="eyebrow"><Zap size={14} fill="currentColor" /> Live mit Freunden spielen</div>
-          <h1>Wie gut kennst du <span>die Welt?</span></h1>
-          <p className="hero-lead">Flaggen erkennen, schneller tippen, Freunde schlagen. Ein Raum, 193 Länder und jede Menge knappe Entscheidungen.</p>
+          <div className="eyebrow"><span /> Multiplayer Flag Quiz</div>
+          <h1>Flaggen erkennen. <span>Freunde schlagen.</span></h1>
+          <p className="hero-lead">Ein schnelles Live-Quiz für den nächsten Spieleabend. Minimal im Aufbau, maximal im Wettbewerb.</p>
+          <a className="primary-button hero-button" href="#play">Jetzt spielen <ArrowRight size={17} /></a>
           <div className="hero-points">
-            <span><Check size={16} /> Kein Account nötig</span>
-            <span><Check size={16} /> Live-Punktestand</span>
-            <span><Check size={16} /> Eigene Spielregeln</span>
+            <span><strong>193</strong> Länder</span>
+            <span><strong>20</strong> Tier-Avatare</span>
+            <span><strong>∞</strong> Revanchen</span>
           </div>
         </div>
 
-        <div className="flag-showcase" aria-hidden="true">
-          <div className="orbit orbit-one" />
-          <div className="orbit orbit-two" />
-          <div className="flag-card flag-card-one"><Image src="/flags/br.png" alt="" width={235} height={172} priority unoptimized /></div>
-          <div className="flag-card flag-card-two"><Image src="/flags/jp.png" alt="" width={210} height={160} priority unoptimized /></div>
-          <div className="flag-card flag-card-three"><Image src="/flags/za.png" alt="" width={222} height={161} priority unoptimized /></div>
-          <div className="showcase-score"><Crown size={18} fill="currentColor" /><strong>+10</strong><small>Schnellste Antwort</small></div>
+        <div className="flag-showcase" aria-label="Vorschau einer Quizrunde">
+          <div className="preview-window">
+            <div className="preview-top"><span><i /> Live · Runde 08</span><strong>12 Sek.</strong></div>
+            <div className="preview-flag"><Image src="/flags/br.png" alt="Flagge von Brasilien" width={340} height={230} priority unoptimized /></div>
+            <div className="preview-answer"><span>Land eintippen …</span><ArrowRight size={16} /></div>
+            <div className="preview-board">
+              <div><PlayerAvatar avatarId="fox" size={34} /><span><b>Yanni</b><small>hat es erkannt</small></span><strong>+10</strong></div>
+              <div><PlayerAvatar avatarId="panda" size={34} /><span><b>Mia</b><small>2. Platz</small></span><strong>+9</strong></div>
+              <div><PlayerAvatar avatarId="frog" size={34} /><span><b>Leo</b><small>3. Platz</small></span><strong>+8</strong></div>
+            </div>
+          </div>
         </div>
       </section>
 
       {profile ? (
-        <section className="play-section wrap" aria-label="Spiel starten oder beitreten">
+        <section className="play-section wrap" id="play" aria-label="Spiel starten oder beitreten">
           <div className="welcome-row">
             <div>
               <p className="section-kicker">Willkommen zurück</p>
@@ -169,7 +175,7 @@ export default function HomePage() {
             </article>
 
             <aside className="stats-card">
-              <div className="stats-avatar">{profile.displayName.slice(0, 1).toUpperCase()}</div>
+              <PlayerAvatar avatarId={profile.avatarId} size={82} className="stats-avatar" priority />
               <strong>{profile.displayName}</strong>
               <span>Deine Gesamtbilanz</span>
               <div className="stats-list">
@@ -182,12 +188,21 @@ export default function HomePage() {
           {error && <p className="error-banner" role="alert">{error}</p>}
         </section>
       ) : (
-        <section className="name-section wrap" aria-label="Spielername eingeben">
+        <section className="name-section wrap" id="play" aria-label="Spielername eingeben">
           <div className="name-card">
             <div className="name-card-copy">
               <p className="section-kicker">Dein Spielerprofil</p>
               <h2>Unter welchem Namen spielst du?</h2>
               <p>Benutze immer denselben Namen – dann sammeln sich Punkte, Spiele und Siege in deiner persönlichen Bilanz.</p>
+              <div className="avatar-lottery">
+                <div className="avatar-stack">
+                  <PlayerAvatar avatarId="fox" size={42} />
+                  <PlayerAvatar avatarId="panda" size={42} />
+                  <PlayerAvatar avatarId="owl" size={42} />
+                  <PlayerAvatar avatarId="capybara" size={42} />
+                </div>
+                <span><Sparkles size={14} /><b>Dein Tier wird ausgelost</b>Eins von 20 bleibt dauerhaft bei deinem Namen.</span>
+              </div>
             </div>
             <form onSubmit={saveName} className="name-form">
               <label htmlFor="playerName">Spielername</label>
@@ -196,7 +211,7 @@ export default function HomePage() {
                 <button className="primary-button" disabled={busy || checking || name.trim().length < 2}>{busy ? "Einen Moment …" : "Loslegen"}<ArrowRight size={18} /></button>
               </div>
               {error && <p className="form-error" role="alert">{error}</p>}
-              <small>Kein Passwort nötig. Für private Runden mit Freunden gedacht.</small>
+              <small>Kein Passwort nötig · für private Runden mit Freunden.</small>
             </form>
           </div>
         </section>

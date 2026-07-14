@@ -1,6 +1,7 @@
 export type Profile = {
   id: string;
   displayName: string;
+  avatarId: string;
   lifetimePoints: number;
   gamesPlayed: number;
   victories: number;
@@ -14,6 +15,7 @@ export type GamePlayer = Profile & {
 export type RoundAnswer = {
   profileId: string;
   displayName: string;
+  avatarId: string;
   rank: number;
   points: number;
   submittedAt: string;

@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
+import { avatarIds } from "@/data/avatars";
 import type { GameSnapshot, Profile, RoundAnswer } from "@/lib/types";
 
 type DemoProfile = Profile & { normalizedName: string };
@@ -40,10 +41,15 @@ if (process.env.NODE_ENV !== "production") globalThis.__flaggenfieberDemo = demo
 
 export function demoProfile(displayName: string, normalizedName: string) {
   const existingId = demoDb.profilesByName.get(normalizedName);
-  if (existingId) return demoDb.profiles.get(existingId)!;
+  if (existingId) {
+    const existing = demoDb.profiles.get(existingId)!;
+    if (!existing.avatarId) existing.avatarId = avatarIds[randomInt(avatarIds.length)];
+    return existing;
+  }
   const profile: DemoProfile = {
     id: randomUUID(),
     displayName,
+    avatarId: avatarIds[randomInt(avatarIds.length)],
     normalizedName,
     lifetimePoints: 0,
     gamesPlayed: 0,

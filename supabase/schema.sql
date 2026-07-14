@@ -7,12 +7,40 @@ create table if not exists public.profiles (
   id uuid primary key default gen_random_uuid(),
   display_name text not null check (char_length(display_name) between 2 and 24),
   normalized_name text not null unique,
+  avatar_id text not null default 'fox',
   lifetime_points integer not null default 0 check (lifetime_points >= 0),
   games_played integer not null default 0 check (games_played >= 0),
   victories integer not null default 0 check (victories >= 0),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint profiles_avatar_id_check check (avatar_id in (
+    'fox', 'bear', 'rabbit', 'panda', 'cat', 'dog', 'raccoon', 'otter', 'red-panda', 'koala',
+    'hedgehog', 'deer', 'tiger', 'lion', 'penguin', 'owl', 'frog', 'capybara', 'hamster', 'alpaca'
+  ))
 );
+
+-- Safe upgrade path when this schema is run against an earlier Flaggenfieber database.
+alter table public.profiles add column if not exists avatar_id text;
+update public.profiles
+set avatar_id = (array[
+  'fox', 'bear', 'rabbit', 'panda', 'cat', 'dog', 'raccoon', 'otter', 'red-panda', 'koala',
+  'hedgehog', 'deer', 'tiger', 'lion', 'penguin', 'owl', 'frog', 'capybara', 'hamster', 'alpaca'
+])[1 + (get_byte(decode(md5(normalized_name), 'hex'), 0) % 20)]
+where avatar_id is null;
+alter table public.profiles alter column avatar_id set default 'fox';
+alter table public.profiles alter column avatar_id set not null;
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'profiles_avatar_id_check' and conrelid = 'public.profiles'::regclass
+  ) then
+    alter table public.profiles add constraint profiles_avatar_id_check check (avatar_id in (
+      'fox', 'bear', 'rabbit', 'panda', 'cat', 'dog', 'raccoon', 'otter', 'red-panda', 'koala',
+      'hedgehog', 'deer', 'tiger', 'lion', 'penguin', 'owl', 'frog', 'capybara', 'hamster', 'alpaca'
+    ));
+  end if;
+end $$;
 
 create table if not exists public.games (
   id uuid primary key default gen_random_uuid(),

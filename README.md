@@ -4,7 +4,9 @@ Ein schnelles Multiplayer-Flaggenquiz für private Runden mit Freunden. Der Host
 
 ## Fertiger Funktionsumfang
 
-- Namensprofil mit dauerhaften Gesamtpunkten, Spielen und Siegen
+- Namensprofil mit dauerhaftem, zufällig zugeordnetem Tier-Avatar
+- 20 individuell generierte Tier-Avatare im konsistenten 3D-Illustrationsstil
+- Dauerhafte Gesamtpunkte, Spiele und Siege pro Name
 - Host-Lobby mit teilbarem Raumcode
 - Einstellbare Rundenzeit von 8 bis 45 Sekunden
 - Einstellbares Punkteziel von 100 bis 500 Punkten
@@ -100,7 +102,9 @@ npm run sync:flags
 src/app/                  Seiten und Serverrouten
 src/lib/game-service.ts   Supabase- und Demo-Spiellogik
 src/data/countries.json   193 Länder, Aliasse und lokale Bildpfade
+src/data/avatars.ts       Avatar-Katalog und stabile Fallback-Zuordnung
 public/flags/             193 lokale PNG-Flaggen
+public/avatars/           20 generierte Tier-Avatare
 supabase/schema.sql       Tabellen, RLS, Trigger und Punktelogik
 scripts/                  Datensatz-Synchronisierung und Prüfung
 ```

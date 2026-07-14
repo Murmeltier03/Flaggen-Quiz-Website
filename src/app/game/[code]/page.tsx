@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeft, Check, Copy, Crown, Flag, Globe2, Home, Medal, Play, Timer, Trophy, Users, Volume2, Zap } from "lucide-react";
 import countries from "@/data/countries.json";
+import { PlayerAvatar } from "@/components/player-avatar";
 import { normalizeName } from "@/lib/text";
 import type { GameSnapshot } from "@/lib/types";
 
@@ -17,11 +18,6 @@ async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Anfrage fehlgeschlagen.");
   return body;
-}
-
-function avatarColor(name: string) {
-  const colors = ["#c8ff48", "#a793ff", "#ffb86b", "#75dcff", "#ff8eb4", "#77e0b5"];
-  return colors[[...name].reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % colors.length];
 }
 
 function playCountdownTone(second: number) {
@@ -195,7 +191,7 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
         <div className="game-header-actions">
           <span className="live-pill"><i /> {snapshot.mode === "demo" ? "Demo" : "Live"}</span>
           <button className="icon-button" onClick={() => setAudioOn((value) => !value)} aria-label="Countdown-Töne umschalten"><Volume2 size={19} />{!audioOn && <b>/</b>}</button>
-          <div className="header-player"><span style={{ background: avatarColor(snapshot.me.displayName) }}>{snapshot.me.displayName[0].toUpperCase()}</span>{snapshot.me.displayName}</div>
+          <div className="header-player"><PlayerAvatar avatarId={snapshot.me.avatarId} size={31} />{snapshot.me.displayName}</div>
         </div>
       </header>
 
@@ -228,7 +224,7 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
             <div className="player-list">
               {snapshot.players.map((player) => (
                 <div className="lobby-player" key={player.id}>
-                  <span className="player-avatar" style={{ background: avatarColor(player.displayName) }}>{player.displayName[0].toUpperCase()}</span>
+                  <PlayerAvatar avatarId={player.avatarId} size={38} className="player-avatar" />
                   <strong>{player.displayName}{player.id === snapshot.me.id && <small>Du</small>}</strong>
                   {player.id === snapshot.game.hostProfileId && <span className="host-badge"><Crown size={12} fill="currentColor" /> Host</span>}
                 </div>
@@ -247,7 +243,7 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
             {snapshot.players.slice(0, 5).map((player, index) => (
               <div className={`podium-row podium-${index + 1}`} key={player.id}>
                 <span className="rank-number">{index + 1}</span>
-                <span className="player-avatar" style={{ background: avatarColor(player.displayName) }}>{player.displayName[0].toUpperCase()}</span>
+                <PlayerAvatar avatarId={player.avatarId} size={38} className="player-avatar" />
                 <strong>{player.displayName}</strong>
                 <b>{player.score} Pkt.</b>
               </div>
@@ -263,7 +259,7 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
               {snapshot.players.map((player, index) => (
                 <div className={`score-player ${player.id === snapshot.me.id ? "is-me" : ""}`} key={player.id}>
                   <span className="score-rank">{index === 0 ? <Crown size={17} fill="currentColor" /> : index + 1}</span>
-                  <span className="player-avatar" style={{ background: avatarColor(player.displayName) }}>{player.displayName[0].toUpperCase()}</span>
+                  <PlayerAvatar avatarId={player.avatarId} size={38} className="player-avatar" />
                   <span className="score-name">{player.displayName}<small>{player.id === snapshot.me.id ? "Du" : ""}</small></span>
                   <strong>{player.score}</strong>
                 </div>
@@ -321,7 +317,7 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
                 {snapshot.answers.map((answer) => (
                   <div className="answer-player" key={answer.profileId}>
                     <span className={`answer-rank rank-${answer.rank}`}>{answer.rank}</span>
-                    <span className="player-avatar" style={{ background: avatarColor(answer.displayName) }}>{answer.displayName[0].toUpperCase()}</span>
+                    <PlayerAvatar avatarId={answer.avatarId} size={36} className="player-avatar" />
                     <strong>{answer.displayName}</strong>
                     <b>+{answer.points}</b>
                   </div>

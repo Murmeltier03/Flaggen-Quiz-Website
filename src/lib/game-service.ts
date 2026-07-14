@@ -1,4 +1,5 @@
 import { randomInt, randomUUID } from "node:crypto";
+import { avatarIdForSeed, avatarIds } from "@/data/avatars";
 import countries from "@/data/countries.json";
 import { demoDb, demoProfile, demoSnapshot, type DemoGame } from "@/lib/demo-store";
 import { hasSupabase, supabaseAdmin } from "@/lib/supabase-admin";
@@ -21,6 +22,7 @@ function mapProfile(row: Record<string, unknown>): Profile {
   return {
     id: String(row.id),
     displayName: String(row.display_name),
+    avatarId: String(row.avatar_id ?? avatarIdForSeed(String(row.normalized_name ?? row.display_name))),
     lifetimePoints: Number(row.lifetime_points ?? 0),
     gamesPlayed: Number(row.games_played ?? 0),
     victories: Number(row.victories ?? 0),
@@ -49,7 +51,11 @@ export async function getOrCreateProfile(rawName: string) {
 
   const { data, error } = await db
     .from("profiles")
-    .insert({ display_name: displayName, normalized_name: normalizedName })
+    .insert({
+      display_name: displayName,
+      normalized_name: normalizedName,
+      avatar_id: avatarIds[randomInt(avatarIds.length)],
+    })
     .select("*")
     .single();
   if (error?.code === "23505") return getOrCreateProfile(displayName);
@@ -58,7 +64,11 @@ export async function getOrCreateProfile(rawName: string) {
 }
 
 export async function getProfile(profileId: string) {
-  if (!hasSupabase) return demoDb.profiles.get(profileId) ?? null;
+  if (!hasSupabase) {
+    const profile = demoDb.profiles.get(profileId) ?? null;
+    if (profile && !profile.avatarId) profile.avatarId = avatarIds[randomInt(avatarIds.length)];
+    return profile;
+  }
   const { data, error } = await requireAdmin().from("profiles").select("*").eq("id", profileId).maybeSingle();
   if (error) throw new ServiceError(error.message, 500);
   return data ? mapProfile(data) : null;
@@ -199,6 +209,7 @@ export async function getSnapshot(profileId: string, rawCode: string): Promise<G
     answers: (answerRows ?? []).map((row) => ({
       profileId: row.profile_id,
       displayName: profileMap.get(row.profile_id)?.displayName ?? "Spieler",
+      avatarId: profileMap.get(row.profile_id)?.avatarId ?? "fox",
       rank: row.rank,
       points: row.points_awarded,
       submittedAt: row.submitted_at,
@@ -285,6 +296,7 @@ export async function submitAnswer(profileId: string, rawCode: string, countryCo
     const answer = {
       profileId,
       displayName: demoDb.profiles.get(profileId)?.displayName ?? "Spieler",
+      avatarId: demoDb.profiles.get(profileId)?.avatarId ?? "fox",
       rank,
       points,
       submittedAt: new Date().toISOString(),
