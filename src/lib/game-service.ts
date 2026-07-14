@@ -217,14 +217,15 @@ export async function getSnapshot(profileId: string, rawCode: string): Promise<G
   };
 }
 
-export async function startRound(profileId: string, rawCode: string) {
+export async function startRound(profileId: string, rawCode: string, expectedRound?: number) {
   const code = rawCode.toUpperCase();
   if (!hasSupabase) {
     const game = demoDb.games.get(code);
     if (!game) throw new ServiceError("Spiel nicht gefunden.", 404);
     if (game.hostProfileId !== profileId) throw new ServiceError("Nur der Host kann eine Runde starten.", 403);
-    if (game.status === "finished") throw new ServiceError("Das Spiel ist bereits beendet.");
-    if (game.roundEndsAt && new Date(game.roundEndsAt).getTime() > Date.now()) throw new ServiceError("Die aktuelle Runde läuft noch.");
+    if (game.status === "finished") return demoSnapshot(game, profileId);
+    if (expectedRound !== undefined && game.currentRound !== expectedRound) return demoSnapshot(game, profileId);
+    if (game.roundEndsAt && new Date(game.roundEndsAt).getTime() > Date.now()) return demoSnapshot(game, profileId);
     let available = countries.filter((country) => !game.usedCountryCodes.includes(country.code));
     if (!available.length) {
       game.usedCountryCodes = [];
@@ -247,8 +248,9 @@ export async function startRound(profileId: string, rawCode: string) {
   if (error) throw new ServiceError(error.message, 500);
   if (!game) throw new ServiceError("Spiel nicht gefunden.", 404);
   if (game.host_profile_id !== profileId) throw new ServiceError("Nur der Host kann eine Runde starten.", 403);
-  if (game.status === "finished") throw new ServiceError("Das Spiel ist bereits beendet.");
-  if (game.round_ends_at && new Date(game.round_ends_at).getTime() > Date.now()) throw new ServiceError("Die aktuelle Runde läuft noch.");
+  if (game.status === "finished") return getSnapshot(profileId, code);
+  if (expectedRound !== undefined && game.current_round !== expectedRound) return getSnapshot(profileId, code);
+  if (game.round_ends_at && new Date(game.round_ends_at).getTime() > Date.now()) return getSnapshot(profileId, code);
   const { data: usedRows } = await db.from("rounds").select("country_code").eq("game_id", game.id);
   const used = new Set((usedRows ?? []).map((row) => row.country_code));
   const available = countries.filter((country) => !used.has(country.code));
@@ -264,8 +266,9 @@ export async function startRound(profileId: string, rawCode: string) {
     started_at: startedAt.toISOString(),
     ends_at: endsAt.toISOString(),
   });
+  if (roundError?.code === "23505") return getSnapshot(profileId, code);
   if (roundError) throw new ServiceError(roundError.message, 500);
-  const { error: updateError } = await db
+  const { data: updatedGame, error: updateError } = await db
     .from("games")
     .update({
       status: "active",
@@ -274,8 +277,12 @@ export async function startRound(profileId: string, rawCode: string) {
       round_started_at: startedAt.toISOString(),
       round_ends_at: endsAt.toISOString(),
     })
-    .eq("id", game.id);
+    .eq("id", game.id)
+    .eq("current_round", game.current_round)
+    .select("id")
+    .maybeSingle();
   if (updateError) throw new ServiceError(updateError.message, 500);
+  if (!updatedGame) return getSnapshot(profileId, code);
   return getSnapshot(profileId, code);
 }
 
