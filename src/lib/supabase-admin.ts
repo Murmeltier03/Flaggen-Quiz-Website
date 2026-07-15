@@ -1,7 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// The Supabase/Vercel integration uses the server-only names. Keep the
+// previous names as fallbacks so existing local and manually configured
+// deployments continue to work.
+const url =
+  process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceKey =
+  process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export const hasSupabase = Boolean(
   url &&

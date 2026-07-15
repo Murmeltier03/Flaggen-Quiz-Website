@@ -44,16 +44,16 @@ Ohne `.env.local` startet die App automatisch im lokalen Demo-Modus. Dieser spei
 
 1. Ein neues Supabase-Projekt anlegen.
 2. Den Inhalt von [`supabase/schema.sql`](supabase/schema.sql) im Supabase SQL Editor einmal ausführen.
-3. `.env.example` nach `.env.local` kopieren und die drei Werte eintragen:
+3. `.env.example` nach `.env.local` kopieren und die folgenden Werte eintragen:
 
 ```dotenv
-NEXT_PUBLIC_SUPABASE_URL=https://DEIN-PROJEKT.supabase.co
+SUPABASE_URL=https://DEIN-PROJEKT.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_...
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
-SUPABASE_SERVICE_ROLE_KEY=sb_secret_...
 PLAYER_COOKIE_SECRET=eine-lange-zufaellige-zeichenfolge
 ```
 
-Der `SUPABASE_SERVICE_ROLE_KEY` darf niemals mit `NEXT_PUBLIC_` beginnen oder in Browsercode verwendet werden. Der Publishable Key ist für eine spätere direkte Realtime-Erweiterung vorbereitet; der aktuelle sichere Serverbetrieb benötigt ihn nicht im Browser.
+`SUPABASE_URL` und `SUPABASE_SECRET_KEY` werden von der offiziellen Supabase/Vercel-Integration automatisch gesetzt. Alternativ unterstützt die App weiterhin die manuellen Variablen `NEXT_PUBLIC_SUPABASE_URL` und `SUPABASE_SERVICE_ROLE_KEY`. Der geheime Schlüssel darf niemals mit `NEXT_PUBLIC_` beginnen oder in Browsercode verwendet werden. Der Publishable Key ist für eine spätere direkte Realtime-Erweiterung vorbereitet; der aktuelle sichere Serverbetrieb benötigt ihn nicht im Browser.
 
 Danach neu starten und prüfen:
 
