@@ -39,17 +39,27 @@ export const demoDb: DemoDatabase =
 
 if (process.env.NODE_ENV !== "production") globalThis.__flaggenfieberDemo = demoDb;
 
+export function leastUsedDemoAvatarId() {
+  const usage = new Map<string, number>(avatarIds.map((avatarId) => [avatarId, 0]));
+  for (const profile of demoDb.profiles.values()) {
+    if (usage.has(profile.avatarId)) usage.set(profile.avatarId, (usage.get(profile.avatarId) ?? 0) + 1);
+  }
+  const minimumUsage = Math.min(...usage.values());
+  const candidates = avatarIds.filter((avatarId) => usage.get(avatarId) === minimumUsage);
+  return candidates[randomInt(candidates.length)];
+}
+
 export function demoProfile(displayName: string, normalizedName: string) {
   const existingId = demoDb.profilesByName.get(normalizedName);
   if (existingId) {
     const existing = demoDb.profiles.get(existingId)!;
-    if (!existing.avatarId) existing.avatarId = avatarIds[randomInt(avatarIds.length)];
+    if (!existing.avatarId) existing.avatarId = leastUsedDemoAvatarId();
     return existing;
   }
   const profile: DemoProfile = {
     id: randomUUID(),
     displayName,
-    avatarId: avatarIds[randomInt(avatarIds.length)],
+    avatarId: leastUsedDemoAvatarId(),
     normalizedName,
     lifetimePoints: 0,
     gamesPlayed: 0,

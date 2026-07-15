@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
+  ChartNoAxesColumnIncreasing,
   Clock3,
   DoorOpen,
   Globe2,
@@ -10,11 +11,13 @@ import {
   Plus,
   Sparkles,
   Target,
+  Trophy,
   X,
 } from "lucide-react";
-import type { Profile } from "@/lib/types";
+import { PlayerAvatar } from "@/components/player-avatar";
+import type { LeaderboardEntry, Profile } from "@/lib/types";
 
-type EntryMode = "create" | "join" | null;
+type EntryMode = "create" | "join" | "stats" | null;
 
 async function jsonRequest<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -36,10 +39,14 @@ export default function HomePage() {
   const [joinCode, setJoinCode] = useState("");
   const [busy, setBusy] = useState<"create" | "join" | null>(null);
   const [error, setError] = useState("");
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [statsLoading, setStatsLoading] = useState(false);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const dialogCloseRef = useRef<HTMLButtonElement | null>(null);
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const nameEdited = useRef(false);
+  const statsRequestId = useRef(0);
 
   useEffect(() => {
     jsonRequest<{ profile: Profile }>("/api/profile", { cache: "no-store" })
@@ -57,8 +64,12 @@ export default function HomePage() {
     if (!dialog) return;
     if (!dialog.open) dialog.showModal();
     const focusFrame = window.requestAnimationFrame(() => {
-      nameInputRef.current?.focus();
-      nameInputRef.current?.select();
+      if (entryMode === "stats") {
+        dialogCloseRef.current?.focus();
+      } else {
+        nameInputRef.current?.focus();
+        nameInputRef.current?.select();
+      }
     });
     return () => window.cancelAnimationFrame(focusFrame);
   }, [entryMode]);
@@ -77,6 +88,22 @@ export default function HomePage() {
   function openEntry(mode: Exclude<EntryMode, null>, opener: HTMLButtonElement) {
     openerRef.current = opener;
     setError("");
+    if (mode === "stats") {
+      const requestId = ++statsRequestId.current;
+      setStatsLoading(true);
+      void jsonRequest<{ leaderboard: LeaderboardEntry[] }>("/api/stats", { cache: "no-store" })
+        .then((data) => {
+          if (statsRequestId.current === requestId) setLeaderboard(data.leaderboard);
+        })
+        .catch((requestError) => {
+          if (statsRequestId.current === requestId) {
+            setError(requestError instanceof Error ? requestError.message : "Statistiken konnten nicht geladen werden.");
+          }
+        })
+        .finally(() => {
+          if (statsRequestId.current === requestId) setStatsLoading(false);
+        });
+    }
     setEntryMode(mode);
   }
 
@@ -86,9 +113,10 @@ export default function HomePage() {
   }
 
   function handleDialogClose() {
+    statsRequestId.current += 1;
     setEntryMode(null);
     setError("");
-    window.requestAnimationFrame(() => openerRef.current?.focus());
+    window.requestAnimationFrame(() => openerRef.current?.focus({ preventScroll: true }));
   }
 
   function handleBackdropClick(event: React.MouseEvent<HTMLDialogElement>) {
@@ -151,10 +179,16 @@ export default function HomePage() {
   }
 
   const nameReady = name.trim().length >= 2;
-  const dialogTitle = entryMode === "create" ? "Neuen Raum erstellen" : "Raum beitreten";
+  const dialogTitle = entryMode === "create"
+    ? "Neuen Raum erstellen"
+    : entryMode === "join"
+      ? "Raum beitreten"
+      : "Gesamtstatistik";
   const dialogDescription = entryMode === "create"
     ? "Lege kurz die Runde fest. Den Einladungscode bekommst du direkt danach."
-    : "Gib deinen Namen und den Code ein, den du vom Host bekommen hast.";
+    : entryMode === "join"
+      ? "Gib deinen Namen und den Code ein, den du vom Host bekommen hast."
+      : "Alle dauerhaft gesammelten Punkte – über sämtliche Spiele hinweg.";
 
   return (
     <main className={"home-shell " + (entryMode ? "has-entry-dialog" : "")}>
@@ -166,7 +200,14 @@ export default function HomePage() {
           <span className="brand-mark"><Globe2 size={19} strokeWidth={2.2} /></span>
           <span>Flaggenfieber</span>
         </div>
-        <span className="quiet-status">Privates Spiel · kein Login</span>
+        {profile ? (
+          <span className="profile-pill" title="Dieses Profil bleibt auf diesem Gerät gespeichert.">
+            <PlayerAvatar avatarId={profile.avatarId} size={34} />
+            <span>{profile.displayName}</span>
+          </span>
+        ) : (
+          <span className="quiet-status">Privates Spiel · kein Login</span>
+        )}
       </header>
 
       <section className="home-content choice-content" aria-labelledby="home-title">
@@ -206,13 +247,28 @@ export default function HomePage() {
             </span>
             <span className="choice-arrow" aria-hidden="true"><ArrowRight size={19} /></span>
           </button>
+
+          <button
+            className="choice-card glass-panel"
+            type="button"
+            aria-haspopup="dialog"
+            onClick={(event) => openEntry("stats", event.currentTarget)}
+          >
+            <span className="entry-icon gold"><ChartNoAxesColumnIncreasing size={22} /></span>
+            <span className="choice-copy">
+              <small>Über alle Spiele</small>
+              <strong>Statistiken</strong>
+              <span>Gesamtpunkte, Siege und gespielte Runden vergleichen.</span>
+            </span>
+            <span className="choice-arrow" aria-hidden="true"><ArrowRight size={19} /></span>
+          </button>
         </div>
       </section>
 
       {entryMode && (
         <dialog
           ref={dialogRef}
-          className="entry-dialog"
+          className={"entry-dialog " + (entryMode === "stats" ? "stats-dialog" : "")}
           aria-labelledby="entry-dialog-title"
           aria-describedby="entry-dialog-description"
           onCancel={(event) => {
@@ -224,17 +280,22 @@ export default function HomePage() {
         >
           <form
             className="entry-dialog-surface glass-panel"
-            onSubmit={entryMode === "create" ? createGame : joinGame}
+            onSubmit={entryMode === "create" ? createGame : entryMode === "join" ? joinGame : (event) => event.preventDefault()}
           >
             <div className="dialog-header">
-              <span className={"entry-icon " + (entryMode === "create" ? "blue" : "green")}>
-                {entryMode === "create" ? <Plus size={22} /> : <DoorOpen size={22} />}
+              <span className={"entry-icon " + (entryMode === "create" ? "blue" : entryMode === "join" ? "green" : "gold")}>
+                {entryMode === "create"
+                  ? <Plus size={22} />
+                  : entryMode === "join"
+                    ? <DoorOpen size={22} />
+                    : <ChartNoAxesColumnIncreasing size={22} />}
               </span>
               <div>
-                <small>{entryMode === "create" ? "Als Host" : "Mit Einladung"}</small>
+                <small>{entryMode === "create" ? "Als Host" : entryMode === "join" ? "Mit Einladung" : "Rangliste"}</small>
                 <h2 id="entry-dialog-title">{dialogTitle}</h2>
               </div>
               <button
+                ref={dialogCloseRef}
                 className="dialog-close"
                 type="button"
                 aria-label="Fenster schließen"
@@ -247,6 +308,30 @@ export default function HomePage() {
 
             <p className="dialog-description" id="entry-dialog-description">{dialogDescription}</p>
 
+            {entryMode === "stats" ? (
+              <div className="stats-panel" aria-live="polite" aria-busy={statsLoading}>
+                {statsLoading ? (
+                  <div className="stats-state"><span className="dot-loader" /><span>Rangliste wird geladen …</span></div>
+                ) : leaderboard.length ? (
+                  <ol className="stats-list">
+                    {leaderboard.map((player, index) => (
+                      <li className={player.id === profile?.id ? "is-me" : ""} key={player.id}>
+                        <span className="stats-rank">{index + 1}</span>
+                        <PlayerAvatar avatarId={player.avatarId} size={40} />
+                        <span className="stats-player">
+                          <strong>{player.displayName}{player.id === profile?.id && <small>Du</small>}</strong>
+                          <small>{player.victories} {player.victories === 1 ? "Sieg" : "Siege"} · {player.gamesPlayed} Spiele</small>
+                        </span>
+                        <span className="stats-points"><strong>{player.lifetimePoints}</strong><small>Punkte</small></span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : !error ? (
+                  <div className="stats-state"><Trophy size={24} /><strong>Noch keine Punkte</strong><span>Nach dem ersten Spiel füllt sich die Rangliste.</span></div>
+                ) : null}
+                {error && <p className="error-banner dialog-error" role="alert">{error}</p>}
+              </div>
+            ) : <>
             <label className="dialog-field" htmlFor="player-name">
               <span>Dein Name</span>
               <div className="dialog-input-wrap">
@@ -262,7 +347,7 @@ export default function HomePage() {
                   minLength={2}
                   maxLength={24}
                   placeholder={checking ? "Profil wird geprüft …" : "Name eingeben"}
-                  autoComplete="nickname"
+                  autoComplete="off"
                   disabled={Boolean(busy)}
                   required
                 />
@@ -332,6 +417,7 @@ export default function HomePage() {
                 <><LogIn size={18} />{busy === "join" ? "Raum wird geöffnet …" : "Raum beitreten"}</>
               )}
             </button>
+            </>}
           </form>
         </dialog>
       )}

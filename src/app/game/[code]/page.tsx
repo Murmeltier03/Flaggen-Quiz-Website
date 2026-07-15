@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -22,7 +22,7 @@ import {
 import countries from "@/data/countries.json";
 import { PlayerAvatar } from "@/components/player-avatar";
 import { normalizeName } from "@/lib/text";
-import type { GameSnapshot } from "@/lib/types";
+import type { AnswerSubmissionResult, GameSnapshot, RoundAnswer } from "@/lib/types";
 
 const AUTO_ADVANCE_DELAY_MS = 2600;
 
@@ -37,21 +37,40 @@ async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
   return body;
 }
 
-function playCountdownTone(second: number) {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) return;
-  const context = new AudioContextClass();
+function playTone(
+  context: AudioContext,
+  frequency: number,
+  startsIn: number,
+  duration: number,
+  volume: number,
+) {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   oscillator.type = "sine";
-  oscillator.frequency.value = second === 1 ? 880 : 600;
-  gain.gain.setValueAtTime(0.0001, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.01);
-  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.16);
+  oscillator.frequency.value = frequency;
+  const start = context.currentTime + startsIn;
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(volume, start + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
   oscillator.connect(gain).connect(context.destination);
-  oscillator.start();
-  oscillator.stop(context.currentTime + 0.18);
-  oscillator.addEventListener("ended", () => void context.close());
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.02);
+}
+
+function playCountdownTone(context: AudioContext, second: number) {
+  playTone(context, second === 1 ? 880 : 600, 0, 0.16, 0.14);
+}
+
+function playTeammateTone(context: AudioContext) {
+  playTone(context, 660, 0, 0.14, 0.09);
+  playTone(context, 880, 0.11, 0.2, 0.11);
+}
+
+function formatReaction(reactionMs: number) {
+  return (reactionMs / 1000).toLocaleString("de-DE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }) + " s";
 }
 
 declare global {
@@ -71,12 +90,33 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [audioOn, setAudioOn] = useState(true);
+  const [teammateNotice, setTeammateNotice] = useState<RoundAnswer | null>(null);
   const lastBeep = useRef<number | null>(null);
   const lastRound = useRef(0);
   const autoAdvanceRound = useRef<number | null>(null);
   const serverOffset = useRef(0);
   const pollInFlight = useRef(false);
+  const refreshQueued = useRef(false);
+  const pollDelay = useRef(500);
+  const audioContext = useRef<AudioContext | null>(null);
+  const seenAnswerKeys = useRef(new Set<string>());
+  const seenAnswersRound = useRef<number | null>(null);
+  const answersInitialized = useRef(false);
+  const currentRoundRef = useRef(0);
+  const answerRequestInFlight = useRef(false);
   const answerInput = useRef<HTMLInputElement | null>(null);
+
+  const ensureAudioContext = useCallback(async () => {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    if (!audioContext.current || audioContext.current.state === "closed") {
+      audioContext.current = new AudioContextClass();
+    }
+    if (audioContext.current.state === "suspended") {
+      await audioContext.current.resume();
+    }
+    return audioContext.current;
+  }, []);
 
   const applySnapshot = useCallback((data: GameSnapshot) => {
     const offset = new Date(data.serverTime).getTime() - Date.now();
@@ -86,19 +126,45 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
       if (!current) return data;
       if (data.game.currentRound < current.game.currentRound) return current;
       if (current.game.status === "finished" && data.game.status !== "finished") return current;
-      return data;
+      if (data.game.currentRound !== current.game.currentRound) return data;
+
+      const answerMap = new Map(data.answers.map((answer) => [answer.profileId, answer]));
+      for (const answer of current.answers) {
+        if (!answerMap.has(answer.profileId)) answerMap.set(answer.profileId, answer);
+      }
+      const scoreByPlayer = new Map(current.players.map((player) => [player.id, player.score]));
+      return {
+        ...data,
+        players: data.players.map((player) => ({
+          ...player,
+          score: Math.max(player.score, scoreByPlayer.get(player.id) ?? 0),
+        })).sort((left, right) => right.score - left.score || left.joinedAt.localeCompare(right.joinedAt)),
+        answers: [...answerMap.values()].sort((left, right) => left.rank - right.rank),
+      };
     });
   }, []);
 
   const loadSnapshot = useCallback(async (quiet = false) => {
-    if (pollInFlight.current) return;
+    if (pollInFlight.current) {
+      refreshQueued.current = true;
+      return;
+    }
     pollInFlight.current = true;
     try {
-      const data = await requestJson<GameSnapshot>("/api/games/" + code);
-      applySnapshot(data);
-      if (!quiet) setError("");
-    } catch (requestError) {
-      if (!quiet) setError(requestError instanceof Error ? requestError.message : "Spiel konnte nicht geladen werden.");
+      let nextRequestIsQuiet = quiet;
+      do {
+        refreshQueued.current = false;
+        try {
+          const data = await requestJson<GameSnapshot>("/api/games/" + code);
+          applySnapshot(data);
+          if (!nextRequestIsQuiet) setError("");
+        } catch (requestError) {
+          if (!nextRequestIsQuiet) {
+            setError(requestError instanceof Error ? requestError.message : "Spiel konnte nicht geladen werden.");
+          }
+        }
+        nextRequestIsQuiet = true;
+      } while (refreshQueued.current);
     } finally {
       pollInFlight.current = false;
     }
@@ -109,7 +175,7 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
     let pollTimer = 0;
     const poll = async (quiet: boolean) => {
       await loadSnapshot(quiet);
-      if (!cancelled) pollTimer = window.setTimeout(() => void poll(true), 800);
+      if (!cancelled) pollTimer = window.setTimeout(() => void poll(true), pollDelay.current);
     };
     void poll(false);
     return () => {
@@ -119,26 +185,93 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
   }, [loadSnapshot]);
 
   useEffect(() => {
+    pollDelay.current = snapshot?.game.status === "active"
+      ? 320
+      : snapshot?.game.status === "waiting"
+        ? 650
+        : 1600;
+  }, [snapshot?.game.status]);
+
+  useEffect(() => {
+    const unlockAudio = () => {
+      if (audioOn) void ensureAudioContext().catch(() => null);
+    };
+    window.addEventListener("pointerdown", unlockAudio, { once: true });
+    window.addEventListener("keydown", unlockAudio, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+    };
+  }, [audioOn, ensureAudioContext]);
+
+  useEffect(() => () => {
+    const context = audioContext.current;
+    audioContext.current = null;
+    if (context && context.state !== "closed") void context.close();
+  }, []);
+
+  useEffect(() => {
     const clock = window.setInterval(() => setNow(Date.now() + serverOffset.current), 100);
     return () => window.clearInterval(clock);
   }, []);
 
   useEffect(() => {
     const round = snapshot?.game.currentRound ?? 0;
+    currentRoundRef.current = round;
     if (round !== lastRound.current) {
       lastRound.current = round;
       autoAdvanceRound.current = null;
       setQuery("");
       setFeedback("idle");
       lastBeep.current = null;
-      window.requestAnimationFrame(() => answerInput.current?.focus());
+      window.requestAnimationFrame(() => answerInput.current?.focus({ preventScroll: true }));
     }
   }, [snapshot?.game.currentRound]);
+
+  useEffect(() => {
+    if (!snapshot) return;
+    const round = snapshot.game.currentRound;
+    const currentKeys = new Set(snapshot.answers.map((answer) => `${round}:${answer.profileId}`));
+    if (!answersInitialized.current) {
+      answersInitialized.current = true;
+      seenAnswersRound.current = round;
+      seenAnswerKeys.current = currentKeys;
+      return;
+    }
+    if (seenAnswersRound.current !== round) {
+      seenAnswersRound.current = round;
+      seenAnswerKeys.current = new Set();
+      setTeammateNotice(null);
+    }
+
+    const newTeammateAnswers = snapshot.answers.filter((answer) => (
+      answer.profileId !== snapshot.me.id
+      && !seenAnswerKeys.current.has(`${round}:${answer.profileId}`)
+    ));
+    seenAnswerKeys.current = currentKeys;
+    if (!newTeammateAnswers.length) return;
+
+    setTeammateNotice(newTeammateAnswers.at(-1) ?? null);
+    if (audioOn) {
+      void ensureAudioContext()
+        .then((context) => {
+          if (context) playTeammateTone(context);
+        })
+        .catch(() => undefined);
+    }
+  }, [audioOn, ensureAudioContext, snapshot]);
+
+  useEffect(() => {
+    if (!teammateNotice) return;
+    const timer = window.setTimeout(() => setTeammateNotice(null), 3600);
+    return () => window.clearTimeout(timer);
+  }, [teammateNotice]);
 
   const remainingMs = snapshot?.game.roundEndsAt ? new Date(snapshot.game.roundEndsAt).getTime() - now : 0;
   const remaining = Math.max(0, Math.ceil(remainingMs / 1000));
   const isRoundLive = snapshot?.game.status === "active" && remainingMs > 0;
-  const hasAnswered = Boolean(snapshot?.answers.some((answer) => answer.profileId === snapshot.me.id));
+  const myAnswer = snapshot?.answers.find((answer) => answer.profileId === snapshot.me.id);
+  const hasAnswered = Boolean(myAnswer);
   const country = countries.find((item) => item.code === snapshot?.game.currentCountryCode);
   const progress = snapshot?.game.roundEndsAt && snapshot.game.roundStartedAt
     ? Math.max(
@@ -157,13 +290,13 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
   useEffect(() => {
     if (audioOn && isRoundLive && remaining <= 3 && remaining >= 1 && lastBeep.current !== remaining) {
       lastBeep.current = remaining;
-      try {
-        playCountdownTone(remaining);
-      } catch {
-        // Browser may block sound until the first interaction.
-      }
+      void ensureAudioContext()
+        .then((context) => {
+          if (context) playCountdownTone(context, remaining);
+        })
+        .catch(() => undefined);
     }
-  }, [audioOn, isRoundLive, remaining]);
+  }, [audioOn, ensureAudioContext, isRoundLive, remaining]);
 
   const startRound = useCallback(async (expectedRound: number, automatic = false) => {
     if (!automatic) {
@@ -215,36 +348,65 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
     startRound,
   ]);
 
-  const suggestions = useMemo(() => {
-    const normalized = normalizeName(query);
-    if (!normalized || normalized.length < 2) return [];
-    return countries
-      .filter((item) => [item.name, ...item.aliases].some((name) => normalizeName(name).includes(normalized)))
-      .slice(0, 5);
-  }, [query]);
-
-  async function submit(event: React.FormEvent, selectedCode?: string) {
+  async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!isRoundLive || hasAnswered || !snapshot) return;
+    if (!isRoundLive || hasAnswered || !snapshot || busy || answerRequestInFlight.current) return;
+    const submittedRound = snapshot.game.currentRound;
     const normalized = normalizeName(query);
-    const match = selectedCode
-      ? countries.find((item) => item.code === selectedCode)
-      : countries.find((item) => [item.name, ...item.aliases].some((name) => normalizeName(name) === normalized));
+    const match = countries.find((item) => (
+      [item.name, ...item.aliases].some((name) => normalizeName(name) === normalized)
+    ));
     if (!match) {
       setFeedback("wrong");
       window.setTimeout(() => setFeedback("idle"), 700);
       return;
     }
+    answerRequestInFlight.current = true;
     setBusy(true);
     try {
-      const result = await requestJson<{ correct: boolean; expired?: boolean }>("/api/games/" + code + "/answer", {
+      if (audioOn) void ensureAudioContext().catch(() => null);
+      const result = await requestJson<AnswerSubmissionResult>("/api/games/" + code + "/answer", {
         method: "POST",
         body: JSON.stringify({ countryCode: match.code }),
       });
+      const resultTime = new Date(result.serverTime).getTime();
+      if (Number.isFinite(resultTime)) {
+        serverOffset.current = resultTime - Date.now();
+        setNow(resultTime);
+      }
+      if (currentRoundRef.current !== submittedRound) {
+        void loadSnapshot(true);
+        return;
+      }
       if (result.correct) {
         setFeedback("correct");
         setQuery(match.name);
-        await loadSnapshot(true);
+        const acceptedAnswer = result.answer;
+        if (acceptedAnswer) {
+          setSnapshot((current) => {
+            if (!current || current.game.currentRound !== submittedRound) return current;
+            const answers = current.answers.some((answer) => answer.profileId === acceptedAnswer.profileId)
+              ? current.answers
+              : [...current.answers, acceptedAnswer].sort((left, right) => left.rank - right.rank);
+            const players = current.players
+              .map((player) => player.id === current.me.id && result.playerScore !== null
+                ? { ...player, score: Math.max(player.score, result.playerScore) }
+                : player)
+              .sort((left, right) => right.score - left.score || left.joinedAt.localeCompare(right.joinedAt));
+            return {
+              ...current,
+              serverTime: result.serverTime,
+              game: {
+                ...current.game,
+                status: result.gameStatus ?? current.game.status,
+                winnerProfileId: result.winnerProfileId ?? current.game.winnerProfileId,
+              },
+              players,
+              answers,
+            };
+          });
+        }
+        void loadSnapshot(true);
       } else {
         setFeedback(result.expired ? "expired" : "wrong");
         if (!result.expired) {
@@ -253,8 +415,11 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
         }
       }
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Antwort konnte nicht gesendet werden.");
+      if (currentRoundRef.current === submittedRound) {
+        setError(requestError instanceof Error ? requestError.message : "Antwort konnte nicht gesendet werden.");
+      }
     } finally {
+      answerRequestInFlight.current = false;
       setBusy(false);
     }
   }
@@ -266,6 +431,16 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
       window.setTimeout(() => setCopied(false), 1400);
     } catch {
       setError("Der Spielcode konnte nicht kopiert werden.");
+    }
+  }
+
+  async function toggleAudio() {
+    const nextValue = !audioOn;
+    setAudioOn(nextValue);
+    if (nextValue) {
+      await ensureAudioContext().catch(() => null);
+    } else if (audioContext.current?.state === "running") {
+      await audioContext.current.suspend().catch(() => undefined);
     }
   }
 
@@ -298,8 +473,8 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
         <div className="game-header-actions">
           <button
             className="icon-button"
-            onClick={() => setAudioOn((value) => !value)}
-            aria-label={audioOn ? "Countdown-Töne ausschalten" : "Countdown-Töne einschalten"}
+            onClick={() => void toggleAudio()}
+            aria-label={audioOn ? "Quiz-Töne ausschalten" : "Quiz-Töne einschalten"}
             aria-pressed={audioOn}
           >
             {audioOn ? <Volume2 size={19} /> : <VolumeX size={19} />}
@@ -310,6 +485,17 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
           </div>
         </div>
       </header>
+
+      {teammateNotice && (
+        <div className="teammate-toast glass-panel" role="status">
+          <PlayerAvatar avatarId={teammateNotice.avatarId} size={34} />
+          <span>
+            <strong>{teammateNotice.displayName} hat’s erkannt</strong>
+            <small>#{teammateNotice.rank} · {formatReaction(teammateNotice.reactionMs)} · {teammateNotice.speedPercent}%</small>
+          </span>
+          <Check size={17} strokeWidth={2.7} />
+        </div>
+      )}
 
       {snapshot.game.status === "waiting" ? (
         <section className="lobby-view wrap">
@@ -436,7 +622,12 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
             ) : hasAnswered || feedback === "correct" ? (
               <div className="correct-box" aria-live="polite">
                 <span><Check size={21} strokeWidth={3} /></span>
-                <div><strong>Richtig</strong><small>Deine Antwort ist drin.</small></div>
+                <div>
+                  <strong>Richtig{myAnswer ? ` · +${myAnswer.points}` : ""}</strong>
+                  <small>{myAnswer
+                    ? `#${myAnswer.rank} · ${formatReaction(myAnswer.reactionMs)} · ${myAnswer.speedPercent}% Tempo`
+                    : "Deine Antwort wird bestätigt."}</small>
+                </div>
               </div>
             ) : (
               <form className={"answer-form " + (feedback === "wrong" ? "shake" : "")} onSubmit={submit}>
@@ -449,33 +640,15 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="Welches Land ist das?"
                     autoComplete="off"
-                    autoFocus
-                    role="combobox"
-                    aria-autocomplete="list"
-                    aria-expanded={suggestions.length > 0}
-                    aria-controls="country-suggestions"
                   />
                   <button disabled={busy || !query.trim()} aria-label="Antwort absenden"><ArrowRight size={20} /></button>
                 </div>
-                {suggestions.length > 0 && (
-                  <div className="suggestions" id="country-suggestions" role="listbox">
-                    {suggestions.map((item) => (
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected="false"
-                        key={item.code}
-                        onClick={(event) => {
-                          setQuery(item.name);
-                          void submit(event, item.code);
-                        }}
-                      >
-                        {item.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <p className={"wrong-text " + (feedback === "wrong" ? "visible" : "")} aria-live="polite">Noch nicht – versuch es weiter.</p>
+                <p
+                  className={"wrong-text " + (feedback === "wrong" || feedback === "expired" ? "visible" : "")}
+                  aria-live="polite"
+                >
+                  {feedback === "expired" ? "Die Zeit ist abgelaufen." : "Noch nicht – versuch es weiter."}
+                </p>
               </form>
             )}
             {error && <p className="error-banner compact" role="alert">{error}</p>}
@@ -490,10 +663,12 @@ export default function GamePage({ params }: { params: Promise<{ code: string }>
               <div className="answer-list">
                 {snapshot.answers.map((answer) => (
                   <div className="answer-player" key={answer.profileId}>
-                    <span className={"answer-rank rank-" + answer.rank}>{answer.rank}</span>
+                    <span className={"answer-rank rank-" + answer.rank}>#{answer.rank}</span>
                     <PlayerAvatar avatarId={answer.avatarId} size={36} className="player-avatar" />
-                    <strong>{answer.displayName}</strong>
-                    <Check size={17} />
+                    <span className="answer-copy">
+                      <strong>{answer.displayName}</strong>
+                      <small>{formatReaction(answer.reactionMs)} · {answer.speedPercent}% · +{answer.points}</small>
+                    </span>
                   </div>
                 ))}
               </div>

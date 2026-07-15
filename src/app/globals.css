@@ -431,6 +431,11 @@ input:focus-visible {
   color: var(--green);
 }
 
+.entry-icon.gold {
+  background: rgba(212, 154, 31, 0.13);
+  color: #a46f08;
+}
+
 .setting-row {
   margin-top: 18px;
 }
@@ -578,7 +583,7 @@ input:focus-visible {
 
 .choice-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
 }
 
@@ -839,6 +844,113 @@ input:focus-visible {
   margin-bottom: -8px;
 }
 
+.entry-dialog.stats-dialog {
+  width: min(680px, calc(100% - 32px));
+}
+
+.stats-panel {
+  min-height: 230px;
+}
+
+.stats-list {
+  max-height: min(490px, calc(100dvh - 230px));
+  margin: 0;
+  padding: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.stats-list li {
+  min-width: 0;
+  min-height: 66px;
+  padding: 10px 13px;
+  border: 1px solid rgba(29, 29, 31, 0.055);
+  border-radius: 19px;
+  background: rgba(255, 255, 255, 0.47);
+  display: grid;
+  grid-template-columns: 25px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+}
+
+.stats-list li.is-me {
+  border-color: rgba(0, 122, 255, 0.13);
+  background: rgba(0, 122, 255, 0.075);
+  box-shadow: inset 0 0 0 1px rgba(0, 122, 255, 0.025);
+}
+
+.stats-rank {
+  color: var(--quiet);
+  font-size: 12px;
+  font-weight: 720;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-player,
+.stats-points {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.stats-player > strong {
+  overflow: hidden;
+  color: #343438;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-player > strong small {
+  margin-left: 7px;
+  color: var(--blue);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.stats-player > small,
+.stats-points > small {
+  color: var(--quiet);
+  font-size: 10px;
+  font-weight: 520;
+}
+
+.stats-points {
+  justify-items: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-points > strong {
+  font-size: 17px;
+  font-weight: 720;
+  letter-spacing: -0.025em;
+}
+
+.stats-state {
+  min-height: 230px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.stats-state > svg {
+  color: var(--quiet);
+}
+
+.stats-state > strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
 @keyframes dialog-surface-in {
   from {
     opacity: 0;
@@ -859,7 +971,7 @@ input:focus-visible {
 .game-shell {
   position: relative;
   min-height: 100vh;
-  overflow: hidden;
+  overflow: clip;
   isolation: isolate;
   background:
     radial-gradient(circle at 50% -15%, rgba(255, 255, 255, 0.94), transparent 43%),
@@ -1436,39 +1548,6 @@ input:focus-visible {
   box-shadow: none;
 }
 
-.suggestions {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% - 4px);
-  left: 0;
-  right: 59px;
-  padding: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.82);
-  border-radius: 17px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 18px 44px rgba(28, 28, 30, 0.15);
-  backdrop-filter: blur(24px) saturate(160%);
-  display: grid;
-  gap: 3px;
-}
-
-.suggestions button {
-  min-height: 40px;
-  padding: 0 11px;
-  border: 0;
-  border-radius: 11px;
-  background: transparent;
-  color: #38383d;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.suggestions button:hover,
-.suggestions button:focus-visible {
-  background: rgba(0, 122, 255, 0.09);
-}
-
 .wrong-text {
   height: 18px;
   margin: 7px 0 -7px 3px;
@@ -1544,33 +1623,86 @@ input:focus-visible {
 }
 
 .answer-player {
-  min-height: 54px;
+  min-height: 62px;
 }
 
-.answer-player > strong {
+.answer-copy {
   flex: 1;
   min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.answer-copy > strong {
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.answer-player > svg {
-  color: var(--green);
+.answer-copy > small {
+  overflow: hidden;
+  color: var(--quiet);
+  font-size: 9px;
+  font-weight: 590;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .answer-rank {
-  width: 23px;
-  height: 23px;
+  width: 27px;
+  height: 24px;
   flex: 0 0 auto;
-  border-radius: 50%;
+  border-radius: 999px;
   background: rgba(118, 118, 128, 0.1);
   color: #55555a;
   display: grid;
   place-items: center;
   font-size: 10px;
   font-weight: 720;
+}
+
+.teammate-toast {
+  position: fixed;
+  z-index: 80;
+  top: 92px;
+  right: 22px;
+  min-width: 260px;
+  max-width: min(360px, calc(100vw - 32px));
+  min-height: 58px;
+  padding: 10px 12px;
+  border-radius: 20px;
+  box-shadow: 0 18px 50px rgba(28, 28, 30, 0.14);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  animation: teammate-toast-in 240ms cubic-bezier(0.22, 0.78, 0.2, 1);
+}
+
+.teammate-toast > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.teammate-toast strong {
+  overflow: hidden;
+  color: #343438;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammate-toast small {
+  color: var(--quiet);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.teammate-toast > svg {
+  color: var(--green);
 }
 
 .answer-rank.rank-1 {
@@ -1699,6 +1831,11 @@ input:focus-visible {
   75% { transform: translateX(-3px); }
 }
 
+@keyframes teammate-toast-in {
+  from { opacity: 0; transform: translateY(-10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 @media (max-width: 1050px) {
   .quiz-layout {
     min-height: auto;
@@ -1756,8 +1893,8 @@ input:focus-visible {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "stage"
-      "score"
-      "answers";
+      "answers"
+      "score";
   }
 
   .quiz-stage {
@@ -1774,6 +1911,12 @@ input:focus-visible {
 }
 
 @media (max-width: 620px) {
+  .home-shell {
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
   .wrap,
   .home-nav,
   .home-content {
@@ -1884,8 +2027,11 @@ input:focus-visible {
     height: 145px;
   }
 
-  .suggestions {
-    right: 0;
+  .teammate-toast {
+    top: 76px;
+    right: 10px;
+    left: 10px;
+    max-width: none;
   }
 
   .result-view {
@@ -1893,7 +2039,7 @@ input:focus-visible {
   }
 }
 
-@media (max-width: 820px) {
+@media (max-width: 1000px) {
   .home-content.choice-content {
     min-height: calc(100vh - 78px);
     padding: 34px 0 76px;
@@ -1967,6 +2113,19 @@ input:focus-visible {
     max-height: calc(100dvh - 20px - env(safe-area-inset-bottom));
     padding: 22px;
     border-radius: 28px;
+  }
+
+  .stats-list li {
+    grid-template-columns: 22px auto minmax(0, 1fr) auto;
+    padding-inline: 9px;
+    gap: 8px;
+  }
+
+  .stats-player > small {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .dialog-header {

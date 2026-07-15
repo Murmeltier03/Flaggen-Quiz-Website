@@ -7,6 +7,11 @@ export type Profile = {
   victories: number;
 };
 
+export type LeaderboardEntry = Pick<
+  Profile,
+  "id" | "displayName" | "avatarId" | "lifetimePoints" | "gamesPlayed" | "victories"
+>;
+
 export type GamePlayer = Profile & {
   score: number;
   joinedAt: string;
@@ -18,7 +23,22 @@ export type RoundAnswer = {
   avatarId: string;
   rank: number;
   points: number;
+  speedPercent: number;
+  reactionMs: number;
   submittedAt: string;
+};
+
+export type GameStatus = "waiting" | "active" | "finished";
+
+export type AnswerSubmissionResult = {
+  correct: boolean;
+  expired: boolean;
+  duplicate: boolean;
+  answer: RoundAnswer | null;
+  playerScore: number | null;
+  gameStatus: GameStatus | null;
+  winnerProfileId: string | null;
+  serverTime: string;
 };
 
 export type GameSnapshot = {
@@ -29,7 +49,7 @@ export type GameSnapshot = {
   game: {
     id: string;
     code: string;
-    status: "waiting" | "active" | "finished";
+    status: GameStatus;
     secondsPerRound: number;
     targetScore: number;
     currentRound: number;

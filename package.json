@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "prebuild": "node scripts/apply-migration-once.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -15,6 +16,7 @@
     "@supabase/supabase-js": "2.110.5",
     "lucide-react": "1.24.0",
     "next": "16.2.10",
+    "pg": "8.22.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "zod": "4.4.3"

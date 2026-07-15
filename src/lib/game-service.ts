@@ -1,10 +1,23 @@
 import { randomInt, randomUUID } from "node:crypto";
-import { avatarIdForSeed, avatarIds } from "@/data/avatars";
+import { avatarIdForSeed } from "@/data/avatars";
 import countries from "@/data/countries.json";
-import { demoDb, demoProfile, demoSnapshot, type DemoGame } from "@/lib/demo-store";
+import {
+  demoDb,
+  demoProfile,
+  demoSnapshot,
+  leastUsedDemoAvatarId,
+  type DemoGame,
+} from "@/lib/demo-store";
 import { hasSupabase, supabaseAdmin } from "@/lib/supabase-admin";
 import { cleanDisplayName, normalizeName } from "@/lib/text";
-import type { GameSnapshot, Profile } from "@/lib/types";
+import type {
+  AnswerSubmissionResult,
+  GameSnapshot,
+  GameStatus,
+  LeaderboardEntry,
+  Profile,
+  RoundAnswer,
+} from "@/lib/types";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -29,6 +42,27 @@ function mapProfile(row: Record<string, unknown>): Profile {
   };
 }
 
+function parseGameStatus(value: unknown): GameStatus | null {
+  return value === "waiting" || value === "active" || value === "finished" ? value : null;
+}
+
+function reactionTier(reactionMs: number) {
+  if (reactionMs <= 3_000) return { speedPercent: 100, points: 10 };
+  if (reactionMs <= 6_000) return { speedPercent: 80, points: 8 };
+  if (reactionMs <= 9_000) return { speedPercent: 60, points: 6 };
+  if (reactionMs <= 12_000) return { speedPercent: 40, points: 4 };
+  return { speedPercent: 20, points: 2 };
+}
+
+function firstRpcRow(data: unknown): Record<string, unknown> | null {
+  const value = Array.isArray(data) ? data[0] : data;
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function nullableNumber(value: unknown) {
+  return value === null || value === undefined ? null : Number(value);
+}
+
 function requireAdmin() {
   if (!supabaseAdmin) throw new ServiceError("Supabase ist nicht konfiguriert.", 503);
   return supabaseAdmin;
@@ -41,37 +75,55 @@ export async function getOrCreateProfile(rawName: string) {
 
   if (!hasSupabase) return demoProfile(displayName, normalizedName);
   const db = requireAdmin();
-  const { data: existing, error: selectError } = await db
-    .from("profiles")
-    .select("*")
-    .eq("normalized_name", normalizedName)
-    .maybeSingle();
-  if (selectError) throw new ServiceError(selectError.message, 500);
-  if (existing) return mapProfile(existing);
-
   const { data, error } = await db
-    .from("profiles")
-    .insert({
-      display_name: displayName,
-      normalized_name: normalizedName,
-      avatar_id: avatarIds[randomInt(avatarIds.length)],
+    .rpc("create_or_get_profile", {
+      p_display_name: displayName,
+      p_normalized_name: normalizedName,
     })
-    .select("*")
     .single();
-  if (error?.code === "23505") return getOrCreateProfile(displayName);
   if (error) throw new ServiceError(error.message, 500);
-  return mapProfile(data);
+  if (!data) throw new ServiceError("Das Spielerprofil konnte nicht angelegt werden.", 500);
+  return mapProfile(data as Record<string, unknown>);
 }
 
 export async function getProfile(profileId: string) {
   if (!hasSupabase) {
     const profile = demoDb.profiles.get(profileId) ?? null;
-    if (profile && !profile.avatarId) profile.avatarId = avatarIds[randomInt(avatarIds.length)];
+    if (profile && !profile.avatarId) profile.avatarId = leastUsedDemoAvatarId();
     return profile;
   }
   const { data, error } = await requireAdmin().from("profiles").select("*").eq("id", profileId).maybeSingle();
   if (error) throw new ServiceError(error.message, 500);
   return data ? mapProfile(data) : null;
+}
+
+export async function getLeaderboard(): Promise<LeaderboardEntry[]> {
+  if (!hasSupabase) {
+    return [...demoDb.profiles.values()]
+      .sort(
+        (left, right) =>
+          right.lifetimePoints - left.lifetimePoints ||
+          right.victories - left.victories ||
+          left.displayName.localeCompare(right.displayName, "de"),
+      )
+      .map(({ id, displayName, avatarId, lifetimePoints, gamesPlayed, victories }) => ({
+        id,
+        displayName,
+        avatarId,
+        lifetimePoints,
+        gamesPlayed,
+        victories,
+      }));
+  }
+
+  const { data, error } = await requireAdmin()
+    .from("profiles")
+    .select("id, display_name, avatar_id, lifetime_points, games_played, victories, created_at")
+    .order("lifetime_points", { ascending: false })
+    .order("victories", { ascending: false })
+    .order("created_at", { ascending: true });
+  if (error) throw new ServiceError(error.message, 500);
+  return (data ?? []).map(mapProfile);
 }
 
 export async function createGame(profileId: string, secondsPerRound: number, targetScore: number) {
@@ -153,20 +205,31 @@ export async function getSnapshot(profileId: string, rawCode: string): Promise<G
   const { data: game, error } = await db.from("games").select("*").eq("code", code).maybeSingle();
   if (error) throw new ServiceError(error.message, 500);
   if (!game) throw new ServiceError("Spiel nicht gefunden.", 404);
-  const { data: membership } = await db
-    .from("game_players")
-    .select("profile_id")
-    .eq("game_id", game.id)
-    .eq("profile_id", profileId)
-    .maybeSingle();
+  const [membershipResult, playersResult, answersResult] = await Promise.all([
+    db
+      .from("game_players")
+      .select("profile_id")
+      .eq("game_id", game.id)
+      .eq("profile_id", profileId)
+      .maybeSingle(),
+    db
+      .from("game_players")
+      .select("profile_id, score, joined_at")
+      .eq("game_id", game.id)
+      .order("score", { ascending: false }),
+    db
+      .from("round_answers")
+      .select("profile_id, rank, points_awarded, speed_percent, reaction_ms, submitted_at")
+      .eq("game_id", game.id)
+      .eq("round_no", game.current_round)
+      .order("rank"),
+  ]);
+  if (membershipResult.error) throw new ServiceError(membershipResult.error.message, 500);
+  const membership = membershipResult.data;
   if (!membership) throw new ServiceError("Du bist diesem Spiel nicht beigetreten.", 403);
-
-  const { data: playerRows, error: playerError } = await db
-    .from("game_players")
-    .select("profile_id, score, joined_at")
-    .eq("game_id", game.id)
-    .order("score", { ascending: false });
-  if (playerError) throw new ServiceError(playerError.message, 500);
+  if (playersResult.error) throw new ServiceError(playersResult.error.message, 500);
+  if (answersResult.error) throw new ServiceError(answersResult.error.message, 500);
+  const playerRows = playersResult.data;
   const profileIds = (playerRows ?? []).map((row) => row.profile_id);
   const { data: profiles, error: profileError } = await db.from("profiles").select("*").in("id", profileIds);
   if (profileError) throw new ServiceError(profileError.message, 500);
@@ -178,14 +241,8 @@ export async function getSnapshot(profileId: string, rawCode: string): Promise<G
   }));
   const me = profileMap.get(profileId);
   if (!me) throw new ServiceError("Profil nicht gefunden.", 404);
-
-  const { data: answerRows, error: answerError } = await db
-    .from("round_answers")
-    .select("profile_id, rank, points_awarded, submitted_at")
-    .eq("game_id", game.id)
-    .eq("round_no", game.current_round)
-    .order("rank");
-  if (answerError) throw new ServiceError(answerError.message, 500);
+  const gameStatus = parseGameStatus(game.status);
+  if (!gameStatus) throw new ServiceError("Das Spiel hat einen ungültigen Status.", 500);
 
   return {
     mode: "supabase",
@@ -195,7 +252,7 @@ export async function getSnapshot(profileId: string, rawCode: string): Promise<G
     game: {
       id: game.id,
       code: game.code,
-      status: game.status,
+      status: gameStatus,
       secondsPerRound: game.seconds_per_round,
       targetScore: game.target_score,
       currentRound: game.current_round,
@@ -206,12 +263,14 @@ export async function getSnapshot(profileId: string, rawCode: string): Promise<G
       winnerProfileId: game.winner_profile_id,
     },
     players,
-    answers: (answerRows ?? []).map((row) => ({
+    answers: (answersResult.data ?? []).map((row) => ({
       profileId: row.profile_id,
       displayName: profileMap.get(row.profile_id)?.displayName ?? "Spieler",
       avatarId: profileMap.get(row.profile_id)?.avatarId ?? "fox",
       rank: row.rank,
       points: row.points_awarded,
+      speedPercent: row.speed_percent,
+      reactionMs: row.reaction_ms,
       submittedAt: row.submitted_at,
     })),
   };
@@ -244,69 +303,96 @@ export async function startRound(profileId: string, rawCode: string, expectedRou
   }
 
   const db = requireAdmin();
-  const { data: game, error } = await db.from("games").select("*").eq("code", code).maybeSingle();
+  const { data: game, error } = await db
+    .from("games")
+    .select("id, host_profile_id, status, current_round")
+    .eq("code", code)
+    .maybeSingle();
   if (error) throw new ServiceError(error.message, 500);
   if (!game) throw new ServiceError("Spiel nicht gefunden.", 404);
   if (game.host_profile_id !== profileId) throw new ServiceError("Nur der Host kann eine Runde starten.", 403);
   if (game.status === "finished") return getSnapshot(profileId, code);
   if (expectedRound !== undefined && game.current_round !== expectedRound) return getSnapshot(profileId, code);
-  if (game.round_ends_at && new Date(game.round_ends_at).getTime() > Date.now()) return getSnapshot(profileId, code);
-  const { data: usedRows } = await db.from("rounds").select("country_code").eq("game_id", game.id);
+  const { data: usedRows, error: usedError } = await db.from("rounds").select("country_code").eq("game_id", game.id);
+  if (usedError) throw new ServiceError(usedError.message, 500);
   const used = new Set((usedRows ?? []).map((row) => row.country_code));
   const available = countries.filter((country) => !used.has(country.code));
   const pool = available.length ? available : countries;
   const country = pool[randomInt(pool.length)];
-  const roundNo = game.current_round + 1;
-  const startedAt = new Date();
-  const endsAt = new Date(startedAt.getTime() + game.seconds_per_round * 1000);
-  const { error: roundError } = await db.from("rounds").insert({
-    game_id: game.id,
-    round_no: roundNo,
-    country_code: country.code,
-    started_at: startedAt.toISOString(),
-    ends_at: endsAt.toISOString(),
+  const { error: startError } = await db.rpc("start_game_round", {
+    p_game_code: code,
+    p_profile_id: profileId,
+    p_country_code: country.code,
+    p_expected_round: expectedRound ?? game.current_round,
   });
-  if (roundError?.code === "23505") return getSnapshot(profileId, code);
-  if (roundError) throw new ServiceError(roundError.message, 500);
-  const { data: updatedGame, error: updateError } = await db
-    .from("games")
-    .update({
-      status: "active",
-      current_round: roundNo,
-      current_country_code: country.code,
-      round_started_at: startedAt.toISOString(),
-      round_ends_at: endsAt.toISOString(),
-    })
-    .eq("id", game.id)
-    .eq("current_round", game.current_round)
-    .select("id")
-    .maybeSingle();
-  if (updateError) throw new ServiceError(updateError.message, 500);
-  if (!updatedGame) return getSnapshot(profileId, code);
+  if (startError) throw new ServiceError(startError.message, 400);
   return getSnapshot(profileId, code);
 }
 
-export async function submitAnswer(profileId: string, rawCode: string, countryCode: string) {
+export async function submitAnswer(
+  profileId: string,
+  rawCode: string,
+  countryCode: string,
+): Promise<AnswerSubmissionResult> {
   const code = rawCode.toUpperCase();
+  const normalizedCountryCode = countryCode.trim().toLowerCase();
   if (!hasSupabase) {
     const game = demoDb.games.get(code);
     if (!game) throw new ServiceError("Spiel nicht gefunden.", 404);
     if (!game.players.has(profileId)) throw new ServiceError("Du bist nicht im Spiel.", 403);
-    if (!game.currentCountryCode || game.status !== "active") throw new ServiceError("Es läuft gerade keine Runde.");
-    if (!game.roundEndsAt || new Date(game.roundEndsAt).getTime() <= Date.now()) return { correct: false, expired: true };
-    if (game.currentCountryCode !== countryCode) return { correct: false, expired: false };
+    const acceptedAt = new Date();
+    const serverTime = acceptedAt.toISOString();
     const answers = game.answers.get(game.currentRound) ?? [];
     const existing = answers.find((answer) => answer.profileId === profileId);
-    if (existing) return { correct: true, answer: existing };
+    if (existing) {
+      return {
+        correct: true,
+        expired: false,
+        duplicate: true,
+        answer: existing,
+        playerScore: game.players.get(profileId)!.score,
+        gameStatus: game.status,
+        winnerProfileId: game.winnerProfileId,
+        serverTime,
+      };
+    }
+    if (!game.currentCountryCode || game.status !== "active") throw new ServiceError("Es läuft gerade keine Runde.");
+    if (!game.roundEndsAt || new Date(game.roundEndsAt).getTime() <= acceptedAt.getTime()) {
+      return {
+        correct: false,
+        expired: true,
+        duplicate: false,
+        answer: null,
+        playerScore: null,
+        gameStatus: game.status,
+        winnerProfileId: game.winnerProfileId,
+        serverTime,
+      };
+    }
+    if (game.currentCountryCode !== normalizedCountryCode) {
+      return {
+        correct: false,
+        expired: false,
+        duplicate: false,
+        answer: null,
+        playerScore: null,
+        gameStatus: game.status,
+        winnerProfileId: game.winnerProfileId,
+        serverTime,
+      };
+    }
     const rank = answers.length + 1;
-    const points = Math.max(1, 11 - rank);
-    const answer = {
+    const reactionMs = Math.max(0, acceptedAt.getTime() - new Date(game.roundStartedAt ?? serverTime).getTime());
+    const { speedPercent, points } = reactionTier(reactionMs);
+    const answer: RoundAnswer = {
       profileId,
       displayName: demoDb.profiles.get(profileId)?.displayName ?? "Spieler",
       avatarId: demoDb.profiles.get(profileId)?.avatarId ?? "fox",
       rank,
       points,
-      submittedAt: new Date().toISOString(),
+      speedPercent,
+      reactionMs,
+      submittedAt: serverTime,
     };
     answers.push(answer);
     game.answers.set(game.currentRound, answers);
@@ -320,28 +406,68 @@ export async function submitAnswer(profileId: string, rawCode: string, countryCo
       profile.victories += 1;
       for (const id of game.players.keys()) demoDb.profiles.get(id)!.gamesPlayed += 1;
     }
-    return { correct: true, answer };
+    return {
+      correct: true,
+      expired: false,
+      duplicate: false,
+      answer,
+      playerScore: player.score,
+      gameStatus: game.status,
+      winnerProfileId: game.winnerProfileId,
+      serverTime,
+    };
   }
 
   const db = requireAdmin();
-  const { data: game, error } = await db.from("games").select("*").eq("code", code).maybeSingle();
-  if (error) throw new ServiceError(error.message, 500);
-  if (!game) throw new ServiceError("Spiel nicht gefunden.", 404);
-  const { data: membership } = await db
-    .from("game_players")
-    .select("profile_id")
-    .eq("game_id", game.id)
-    .eq("profile_id", profileId)
-    .maybeSingle();
-  if (!membership) throw new ServiceError("Du bist nicht im Spiel.", 403);
-  if (!game.round_ends_at || new Date(game.round_ends_at).getTime() <= Date.now()) return { correct: false, expired: true };
-  if (game.current_country_code !== countryCode) return { correct: false, expired: false };
-  const { data, error: insertError } = await db
-    .from("round_answers")
-    .insert({ game_id: game.id, round_no: game.current_round, profile_id: profileId, country_code: countryCode })
-    .select("rank, points_awarded, submitted_at")
-    .single();
-  if (insertError?.code === "23505") return { correct: true, duplicate: true };
-  if (insertError) throw new ServiceError(insertError.message, 400);
-  return { correct: true, answer: data };
+  const { data, error } = await db.rpc("submit_game_answer", {
+    p_game_code: code,
+    p_profile_id: profileId,
+    p_country_code: normalizedCountryCode,
+  });
+  if (error) throw new ServiceError(error.message, 400);
+  const row = firstRpcRow(data);
+  if (!row) throw new ServiceError("Die Antwort konnte nicht ausgewertet werden.", 500);
+
+  const correct = row.is_correct === true;
+  let answer: RoundAnswer | null = null;
+  if (correct) {
+    const rank = nullableNumber(row.answer_rank);
+    const points = nullableNumber(row.answer_points);
+    const speedPercent = nullableNumber(row.answer_speed_percent);
+    const reactionMs = nullableNumber(row.answer_reaction_ms);
+    const submittedAt = row.answer_submitted_at ? String(row.answer_submitted_at) : null;
+    if (rank === null || points === null || speedPercent === null || reactionMs === null || !submittedAt) {
+      throw new ServiceError("Die Serverauswertung war unvollständig.", 500);
+    }
+
+    let displayName = row.answer_display_name ? String(row.answer_display_name) : null;
+    let avatarId = row.answer_avatar_id ? String(row.answer_avatar_id) : null;
+    if (!displayName || !avatarId) {
+      const profile = await getProfile(profileId);
+      if (!profile) throw new ServiceError("Spielerprofil nicht gefunden.", 404);
+      displayName = profile.displayName;
+      avatarId = profile.avatarId;
+    }
+    answer = {
+      profileId,
+      displayName,
+      avatarId,
+      rank,
+      points,
+      speedPercent,
+      reactionMs,
+      submittedAt,
+    };
+  }
+
+  return {
+    correct,
+    expired: row.is_expired === true,
+    duplicate: row.is_duplicate === true,
+    answer,
+    playerScore: nullableNumber(row.player_score),
+    gameStatus: parseGameStatus(row.game_status),
+    winnerProfileId: row.winner_profile_id ? String(row.winner_profile_id) : null,
+    serverTime: String(row.server_time ?? row.answer_submitted_at ?? new Date().toISOString()),
+  };
 }
