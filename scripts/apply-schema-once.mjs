@@ -9,7 +9,14 @@ if (!databaseUrl) {
 }
 
 const schema = await readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8");
-const client = new pg.Client({ connectionString: databaseUrl });
+const connectionUrl = new URL(databaseUrl);
+
+// Supavisor's shared pooler requires TLS. Use standard libpq `require`
+// semantics: the connection stays encrypted without relying on Node's CA set.
+connectionUrl.searchParams.set("sslmode", "require");
+connectionUrl.searchParams.set("uselibpqcompat", "true");
+
+const client = new pg.Client({ connectionString: connectionUrl.toString() });
 
 await client.connect();
 
